@@ -15,16 +15,37 @@ La API queda disponible en:
 http://localhost:4000
 ```
 
+La API desplegada esta en:
+
+```text
+https://backend-plataforma-abi.vercel.app
+```
+
 ## Desplegar en Vercel
 
 1. Crea un proyecto de Vercel apuntando a esta carpeta `backend`.
-2. Configura `FRONTEND_URL` con la URL del frontend desplegado.
-3. Despliega.
+2. En Supabase abre SQL Editor y ejecuta el archivo `database.sql`.
+3. Configura `DATABASE_URL` con la URL de PostgreSQL.
+4. Configura `FRONTEND_URL` con la URL del frontend desplegado.
+5. Despliega.
 
 ## Variables
 
 - `PORT`: puerto local opcional.
+- `DATABASE_URL`: cadena de conexion PostgreSQL de Supabase.
 - `FRONTEND_URL`: origen permitido para CORS. Para este proyecto usa `https://aula-de-abi.vercel.app`.
-- `STORAGE_DIR`: carpeta de almacenamiento opcional.
 
-En Vercel el almacenamiento local usa `/tmp`, por lo que no es persistente entre reinicios. Para datos permanentes conviene conectar una base de datos o almacenamiento externo.
+## Base de datos
+
+El backend guarda usuarios, progreso, evaluaciones y videos en PostgreSQL. Ejecuta este archivo en Supabase:
+
+```text
+database.sql
+```
+
+## Comandos necesarios
+
+```bash
+npm install
+npm run build
+```

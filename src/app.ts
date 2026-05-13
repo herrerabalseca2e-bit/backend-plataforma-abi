@@ -1,9 +1,9 @@
 import express, { NextFunction, Request, Response } from 'express';
-import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import pg from 'pg';
 import { randomUUID } from 'node:crypto';
-import { dirname, extname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { extname } from 'node:path';
+
+const { Pool } = pg;
 
 type SubjectId = 'matematica' | 'historia' | 'lengua' | 'ciencias';
 type UserRole = 'docente' | 'estudiante' | 'gerente' | 'administrador';
@@ -43,14 +43,32 @@ interface StoredVideoRecord {
   fileName: string;
 }
 
-const currentDir = dirname(fileURLToPath(import.meta.url));
-const storageFolder =
-  process.env['STORAGE_DIR'] ||
-  (process.env['VERCEL'] ? join('/tmp', 'app-storage') : join(currentDir, '../app-storage'));
-const uploadFolder = join(storageFolder, 'uploaded-videos');
-const videosFile = join(storageFolder, 'videos.json');
-const usersFile = join(storageFolder, 'users.json');
-const quizzesFile = join(storageFolder, 'quizzes.json');
+interface UserRow {
+  name: string;
+  email: string;
+  password: string;
+  role: UserRole;
+  progress: Record<SubjectId, SubjectProgress> | null;
+  completed_video_ids: string[] | null;
+}
+
+interface VideoRow {
+  id: string;
+  subject_id: SubjectId;
+  name: string;
+  mime_type: string;
+  uploaded_at: Date;
+  file_name: string;
+  data?: Buffer;
+}
+
+const databaseUrl = process.env['DATABASE_URL'] || process.env['POSTGRES_URL'];
+const pool = databaseUrl
+  ? new Pool({
+      connectionString: databaseUrl,
+      ssl: { rejectUnauthorized: false },
+    })
+  : null;
 
 const app = express();
 
@@ -88,6 +106,14 @@ function sendError(res: Response, status: number, message: string) {
       message,
     },
   });
+}
+
+function db() {
+  if (!pool) {
+    throw new Error('DATABASE_URL no esta configurada.');
+  }
+
+  return pool;
 }
 
 function getBaseUrl(req: Request) {
@@ -268,73 +294,121 @@ function createEmptyProgress(): Record<SubjectId, SubjectProgress> {
   };
 }
 
-async function ensureStorage() {
-  await mkdir(storageFolder, { recursive: true });
-  await mkdir(uploadFolder, { recursive: true });
-
-  if (!existsSync(videosFile)) {
-    await writeFile(videosFile, '[]', 'utf-8');
-  }
-
-  if (!existsSync(usersFile)) {
-    await writeFile(usersFile, '[]', 'utf-8');
-  }
-
-  if (!existsSync(quizzesFile)) {
-    await writeFile(quizzesFile, JSON.stringify(createDefaultQuizzes(), null, 2), 'utf-8');
-  }
-}
-
-async function readJsonFile<T>(filePath: string, fallback: T): Promise<T> {
-  await ensureStorage();
-
-  try {
-    const raw = await readFile(filePath, 'utf-8');
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-async function writeJsonFile<T>(filePath: string, data: T) {
-  await ensureStorage();
-  await writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
-}
-
-async function readUsers() {
-  const users = await readJsonFile<StoredUserRecord[]>(usersFile, []);
-  return users.map((user) => ({
-    ...user,
+function mapUser(row: UserRow): StoredUserRecord {
+  return {
+    name: row.name,
+    email: row.email,
+    password: row.password,
+    role: row.role,
     progress: {
       ...createEmptyProgress(),
-      ...user.progress,
+      ...(row.progress ?? {}),
     },
-    completedVideoIds: user.completedVideoIds ?? [],
-  }));
-}
-
-async function writeUsers(users: StoredUserRecord[]) {
-  await writeJsonFile(usersFile, users);
-}
-
-async function readVideos() {
-  return readJsonFile<StoredVideoRecord[]>(videosFile, []);
-}
-
-async function writeVideos(videos: StoredVideoRecord[]) {
-  await writeJsonFile(videosFile, videos);
-}
-
-async function readQuizzes() {
-  const quizzes = await readJsonFile<Record<SubjectId, QuizQuestion[]>>(quizzesFile, createDefaultQuizzes());
-  return {
-    ...createDefaultQuizzes(),
-    ...quizzes,
+    completedVideoIds: row.completed_video_ids ?? [],
   };
 }
 
-async function writeQuizzes(quizzes: Record<SubjectId, QuizQuestion[]>) {
-  await writeJsonFile(quizzesFile, quizzes);
+function mapVideo(row: VideoRow): StoredVideoRecord {
+  return {
+    id: row.id,
+    subjectId: row.subject_id,
+    name: row.name,
+    type: row.mime_type,
+    uploadedAt: row.uploaded_at.toISOString(),
+    fileName: row.file_name,
+  };
+}
+
+async function readUsers() {
+  const result = await db().query<UserRow>(
+    'select name, email, password, role, progress, completed_video_ids from app_users order by name asc',
+  );
+  return result.rows.map((row) => mapUser(row));
+}
+
+async function findUserByEmail(email: string) {
+  const result = await db().query<UserRow>(
+    'select name, email, password, role, progress, completed_video_ids from app_users where email = $1 limit 1',
+    [email],
+  );
+  return result.rows[0] ? mapUser(result.rows[0]) : null;
+}
+
+async function createUser(user: StoredUserRecord) {
+  await db().query(
+    'insert into app_users (name, email, password, role, progress, completed_video_ids) values ($1, $2, $3, $4, $5::jsonb, $6)',
+    [user.name, user.email, user.password, user.role, JSON.stringify(user.progress), user.completedVideoIds],
+  );
+}
+
+async function updateUserProgress(email: string, progress: Record<SubjectId, SubjectProgress>) {
+  const result = await db().query<UserRow>(
+    'update app_users set progress = $2::jsonb, updated_at = now() where email = $1 returning name, email, password, role, progress, completed_video_ids',
+    [email, JSON.stringify(progress)],
+  );
+  return result.rows[0] ? mapUser(result.rows[0]) : null;
+}
+
+async function updateUserCompletedVideos(email: string, completedVideoIds: string[]) {
+  const result = await db().query<UserRow>(
+    'update app_users set completed_video_ids = $2, updated_at = now() where email = $1 returning name, email, password, role, progress, completed_video_ids',
+    [email, completedVideoIds],
+  );
+  return result.rows[0] ? mapUser(result.rows[0]) : null;
+}
+
+async function readVideos() {
+  const result = await db().query<VideoRow>(
+    'select id, subject_id, name, mime_type, uploaded_at, file_name from videos order by uploaded_at asc',
+  );
+  return result.rows.map((row) => mapVideo(row));
+}
+
+async function findVideoById(id: string) {
+  const result = await db().query<VideoRow>(
+    'select id, subject_id, name, mime_type, uploaded_at, file_name, data from videos where id = $1 limit 1',
+    [id],
+  );
+  return result.rows[0] ?? null;
+}
+
+async function findVideoByFileName(fileName: string) {
+  const result = await db().query<VideoRow>(
+    'select id, subject_id, name, mime_type, uploaded_at, file_name, data from videos where file_name = $1 limit 1',
+    [fileName],
+  );
+  return result.rows[0] ?? null;
+}
+
+async function createVideo(record: StoredVideoRecord, data: Buffer) {
+  await db().query(
+    'insert into videos (id, subject_id, name, mime_type, uploaded_at, file_name, data) values ($1, $2, $3, $4, $5, $6, $7)',
+    [record.id, record.subjectId, record.name, record.type, record.uploadedAt, record.fileName, data],
+  );
+}
+
+async function deleteVideo(id: string) {
+  await db().query('delete from videos where id = $1', [id]);
+}
+
+async function readQuizzes() {
+  const result = await db().query<{ subject_id: SubjectId; quiz: QuizQuestion[] }>(
+    'select subject_id, quiz from quizzes',
+  );
+  const quizzes = createDefaultQuizzes();
+
+  for (const row of result.rows) {
+    quizzes[row.subject_id] = row.quiz;
+  }
+
+  return quizzes;
+}
+
+async function updateQuiz(subjectId: SubjectId, quiz: QuizQuestion[]) {
+  await db().query(
+    'insert into quizzes (subject_id, quiz, updated_at) values ($1, $2::jsonb, now()) on conflict (subject_id) do update set quiz = excluded.quiz, updated_at = now()',
+    [subjectId, JSON.stringify(quiz)],
+  );
 }
 
 function safeExtension(fileName: string, mimeType: string) {
@@ -380,13 +454,25 @@ function createVideoResponse(req: Request, record: StoredVideoRecord) {
   };
 }
 
-app.get('/api/health', (_req, res) => {
+app.get('/api/health', async (_req, res) => {
+  await db().query('select 1');
   sendSuccess(res, 200, 'Backend funcionando correctamente.', {
     service: 'aula-escolar-backend',
+    database: 'postgresql',
   });
 });
 
-app.use('/uploaded-videos', express.static(uploadFolder, { index: false, redirect: false }));
+app.get('/uploaded-videos/:fileName', async (req, res) => {
+  const fileName = req.params.fileName;
+  const video = await findVideoByFileName(fileName);
+
+  if (!video?.data) {
+    sendError(res, 404, 'Video no encontrado.');
+    return;
+  }
+
+  res.status(200).type(video.mime_type).send(video.data);
+});
 
 app.post('/api/auth/register', async (req, res) => {
   const name = String(req.body?.name ?? '').trim();
@@ -415,8 +501,7 @@ app.post('/api/auth/register', async (req, res) => {
     return;
   }
 
-  const users = await readUsers();
-  const exists = users.some((user) => user.email === email);
+  const exists = await findUserByEmail(email);
   if (exists) {
     sendError(res, 409, 'Ese correo ya esta registrado.');
     return;
@@ -431,8 +516,7 @@ app.post('/api/auth/register', async (req, res) => {
     completedVideoIds: [],
   };
 
-  users.push(nextUser);
-  await writeUsers(users);
+  await createUser(nextUser);
   sendSuccess(res, 201, 'Usuario registrado correctamente.', { user: sanitizeUser(nextUser) });
 });
 
@@ -445,8 +529,7 @@ app.post('/api/auth/login', async (req, res) => {
     return;
   }
 
-  const users = await readUsers();
-  const user = users.find((item) => item.email === email);
+  const user = await findUserByEmail(email);
 
   if (!user) {
     sendError(res, 404, 'Ese correo no existe.');
@@ -463,8 +546,7 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/users/:email', async (req, res) => {
   const email = decodeURIComponent(req.params.email).trim().toLowerCase();
-  const users = await readUsers();
-  const user = users.find((item) => item.email === email);
+  const user = await findUserByEmail(email);
 
   if (!user) {
     sendError(res, 404, 'Usuario no encontrado.');
@@ -520,16 +602,15 @@ app.put('/api/quizzes/:subjectId', async (req, res) => {
     return;
   }
 
-  const quizzes = await readQuizzes();
-  quizzes[subjectId] = quiz.map((question) => ({
+  const savedQuiz = quiz.map((question) => ({
     prompt: String(question.prompt).trim(),
     options: question.options.map((option) => String(option).trim()),
     correctIndex: question.correctIndex,
     explanation: String(question.explanation).trim(),
   }));
 
-  await writeQuizzes(quizzes);
-  sendSuccess(res, 200, 'Evaluacion actualizada correctamente.', { quiz: quizzes[subjectId] });
+  await updateQuiz(subjectId, savedQuiz);
+  sendSuccess(res, 200, 'Evaluacion actualizada correctamente.', { quiz: savedQuiz });
 });
 
 app.patch('/api/users/:email/progress', async (req, res) => {
@@ -543,46 +624,45 @@ app.patch('/api/users/:email/progress', async (req, res) => {
     return;
   }
 
-  const users = await readUsers();
-  const userIndex = users.findIndex((item) => item.email === email);
-  if (userIndex === -1) {
+  const user = await findUserByEmail(email);
+  if (!user) {
     sendError(res, 404, 'Usuario no encontrado.');
     return;
   }
 
-  users[userIndex] = {
-    ...users[userIndex],
-    progress: {
-      ...users[userIndex].progress,
-      [subjectId]: progress,
-    },
-  };
+  const updatedUser = await updateUserProgress(email, {
+    ...user.progress,
+    [subjectId]: progress,
+  });
 
-  await writeUsers(users);
-  sendSuccess(res, 200, 'Progreso actualizado correctamente.', { user: sanitizeUser(users[userIndex]) });
+  if (!updatedUser) {
+    sendError(res, 404, 'Usuario no encontrado.');
+    return;
+  }
+
+  sendSuccess(res, 200, 'Progreso actualizado correctamente.', { user: sanitizeUser(updatedUser) });
 });
 
 app.post('/api/users/:email/videos/:videoId/complete', async (req, res) => {
   const email = decodeURIComponent(req.params.email).trim().toLowerCase();
   const videoId = req.params.videoId;
 
-  const users = await readUsers();
-  const userIndex = users.findIndex((item) => item.email === email);
-  if (userIndex === -1) {
+  const user = await findUserByEmail(email);
+  if (!user) {
     sendError(res, 404, 'Usuario no encontrado.');
     return;
   }
 
-  const completed = new Set(users[userIndex].completedVideoIds ?? []);
+  const completed = new Set(user.completedVideoIds ?? []);
   completed.add(videoId);
+  const updatedUser = await updateUserCompletedVideos(email, Array.from(completed));
 
-  users[userIndex] = {
-    ...users[userIndex],
-    completedVideoIds: Array.from(completed),
-  };
+  if (!updatedUser) {
+    sendError(res, 404, 'Usuario no encontrado.');
+    return;
+  }
 
-  await writeUsers(users);
-  sendSuccess(res, 200, 'Video marcado como completado correctamente.', { user: sanitizeUser(users[userIndex]) });
+  sendSuccess(res, 200, 'Video marcado como completado correctamente.', { user: sanitizeUser(updatedUser) });
 });
 
 app.get('/api/videos', async (req, res) => {
@@ -614,11 +694,6 @@ app.post('/api/videos', async (req, res) => {
   const extension = safeExtension(String(name), String(type));
   const id = randomUUID();
   const fileName = `${id}${extension}`;
-
-  await ensureStorage();
-  await writeFile(join(uploadFolder, fileName), buffer);
-
-  const records = await readVideos();
   const nextRecord: StoredVideoRecord = {
     id,
     subjectId,
@@ -628,9 +703,7 @@ app.post('/api/videos', async (req, res) => {
     fileName,
   };
 
-  records.push(nextRecord);
-  await writeVideos(records);
-
+  await createVideo(nextRecord, buffer);
   sendSuccess(res, 201, 'Video guardado correctamente.', {
     video: createVideoResponse(req, nextRecord),
   });
@@ -638,22 +711,14 @@ app.post('/api/videos', async (req, res) => {
 
 app.delete('/api/videos/:id', async (req, res) => {
   const { id } = req.params;
-  const records = await readVideos();
-  const record = records.find((item) => item.id === id);
+  const record = await findVideoById(id);
 
   if (!record) {
     sendError(res, 404, 'Video no encontrado.');
     return;
   }
 
-  const filePath = join(uploadFolder, record.fileName);
-  try {
-    await stat(filePath);
-    await unlink(filePath);
-  } catch {
-  }
-
-  await writeVideos(records.filter((item) => item.id !== id));
+  await deleteVideo(id);
   sendSuccess(res, 200, 'Video eliminado correctamente.');
 });
 
