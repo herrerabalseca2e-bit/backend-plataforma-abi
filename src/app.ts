@@ -610,10 +610,16 @@ app.get('/api/videos', async (req, res) => {
     }>;
 
     const origin = `${req.protocol}://${req.get('host')}`;
-    const videos = records.map((record) => ({
-      ...record,
-      url: `${origin}/app-storage/uploaded-videos/${encodeURIComponent(record.fileName)}`,
-    }));
+    const videos = records
+      .filter((record) => typeof record.fileName === 'string' && record.fileName.trim().length > 0)
+      .map((record) => ({
+        ...record,
+        url: `${origin}/app-storage/uploaded-videos/${encodeURIComponent(record.fileName)}`,
+      }));
+
+    if (videos.length !== records.length) {
+      console.warn('Algunos registros de videos no contienen fileName y fueron omitidos.');
+    }
 
     sendSuccess(res, 200, 'Videos cargados correctamente.', { videos });
   } catch (error) {
