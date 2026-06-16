@@ -1,5 +1,8 @@
 node_modules
 dist
 .vercel
-app-storage
+app-storage/*
+!app-storage/videos.json
+!app-storage/uploaded-videos/
+!app-storage/uploaded-videos/**
 .env

@@ -1,0 +1,73 @@
+[
+  {
+    "id": "b0c2c104-9f38-447d-8da7-d8b6b473d77f",
+    "subjectId": "matematica",
+    "name": "WhatsApp Video 2026-04-30 at 19.55.57.mp4",
+    "type": "video/mp4",
+    "uploadedAt": "2026-05-01T02:04:07.265Z",
+    "fileName": "b0c2c104-9f38-447d-8da7-d8b6b473d77f.mp4"
+  },
+  {
+    "id": "b6f09a5f-5a15-4cb0-a906-e04af3bf0713",
+    "subjectId": "matematica",
+    "name": "WhatsApp Video 2026-04-30 at 20.04.59.mp4",
+    "type": "video/mp4",
+    "uploadedAt": "2026-05-01T02:08:08.239Z",
+    "fileName": "b6f09a5f-5a15-4cb0-a906-e04af3bf0713.mp4"
+  },
+  {
+    "id": "48c5dc56-21b1-46eb-9624-f77fb3dfae85",
+    "subjectId": "historia",
+    "name": "WhatsApp Video 2026-04-30 at 20.23.10.mp4",
+    "type": "video/mp4",
+    "uploadedAt": "2026-05-01T02:23:39.109Z",
+    "fileName": "48c5dc56-21b1-46eb-9624-f77fb3dfae85.mp4"
+  },
+  {
+    "id": "4690f368-525d-4a17-8cdd-2b115287d87c",
+    "subjectId": "historia",
+    "name": "WhatsApp Video 2026-04-30 at 20.24.16.mp4",
+    "type": "video/mp4",
+    "uploadedAt": "2026-05-01T02:24:27.368Z",
+    "fileName": "4690f368-525d-4a17-8cdd-2b115287d87c.mp4"
+  },
+  {
+    "id": "9b8ef409-3da8-49ad-afb5-187ee0baa224",
+    "subjectId": "lengua",
+    "name": "WhatsApp Video 2026-04-30 at 20.24.44.mp4",
+    "type": "video/mp4",
+    "uploadedAt": "2026-05-01T02:24:57.454Z",
+    "fileName": "9b8ef409-3da8-49ad-afb5-187ee0baa224.mp4"
+  },
+  {
+    "id": "9a206945-82c1-41dc-b9b7-c984c97b02fd",
+    "subjectId": "lengua",
+    "name": "WhatsApp Video 2026-04-30 at 20.25.13.mp4",
+    "type": "video/mp4",
+    "uploadedAt": "2026-05-01T02:25:22.362Z",
+    "fileName": "9a206945-82c1-41dc-b9b7-c984c97b02fd.mp4"
+  },
+  {
+    "id": "a0f7e360-aea3-4bfb-bf99-17589411fe1d",
+    "subjectId": "ciencias",
+    "name": "WhatsApp Video 2026-04-30 at 20.25.41.mp4",
+    "type": "video/mp4",
+    "uploadedAt": "2026-05-01T02:25:51.049Z",
+    "fileName": "a0f7e360-aea3-4bfb-bf99-17589411fe1d.mp4"
+  },
+  {
+    "id": "63b65ac1-a1e2-4a89-be22-5e3031c13c66",
+    "subjectId": "ciencias",
+    "name": "WhatsApp Video 2026-04-30 at 20.26.01.mp4",
+    "type": "video/mp4",
+    "uploadedAt": "2026-05-01T02:26:09.895Z",
+    "fileName": "63b65ac1-a1e2-4a89-be22-5e3031c13c66.mp4"
+  },
+  {
+    "id": "abe487-abfh573-djer57",
+    "subjectId":"matematica",
+    "name":"video.mp4",
+    "type":"video/mp4",
+    "uploadedAt":"2026-05-01T02:30:00.000"
+  }
+]

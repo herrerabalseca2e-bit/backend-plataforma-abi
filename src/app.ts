@@ -1,6 +1,7 @@
 import express, { NextFunction, Request, Response } from 'express';
 import fs from 'fs/promises';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import pg from 'pg';
 
 const { Pool } = pg;
@@ -52,7 +53,7 @@ const pool = databaseUrl
   : null;
 
 const app = express();
-const appStoragePath = path.join(process.cwd(), 'app-storage');
+const appStoragePath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'app-storage');
 
 app.set('trust proxy', 1);
 app.use((req, res, next) => {
