@@ -1,7 +1,5 @@
 import express, { NextFunction, Request, Response } from 'express';
 import pg from 'pg';
-import { randomUUID } from 'node:crypto';
-import { extname } from 'node:path';
 
 const { Pool } = pg;
 
@@ -34,15 +32,6 @@ interface StoredUserRecord {
   completedVideoIds: string[];
 }
 
-interface StoredVideoRecord {
-  id: string;
-  subjectId: SubjectId;
-  name: string;
-  type: string;
-  uploadedAt: string;
-  fileName: string;
-}
-
 interface UserRow {
   name: string;
   email: string;
@@ -50,16 +39,6 @@ interface UserRow {
   role: UserRole;
   progress: Record<SubjectId, SubjectProgress> | null;
   completed_video_ids: string[] | null;
-}
-
-interface VideoRow {
-  id: string;
-  subject_id: SubjectId;
-  name: string;
-  mime_type: string;
-  uploaded_at: Date;
-  file_name: string;
-  data?: Buffer;
 }
 
 const databaseUrl = process.env['DATABASE_URL'] || process.env['POSTGRES_URL'];
@@ -114,10 +93,6 @@ function db() {
   }
 
   return pool;
-}
-
-function getBaseUrl(req: Request) {
-  return `${req.protocol}://${req.get('host')}`;
 }
 
 function createDefaultQuizzes(): Record<SubjectId, QuizQuestion[]> {
@@ -308,17 +283,6 @@ function mapUser(row: UserRow): StoredUserRecord {
   };
 }
 
-function mapVideo(row: VideoRow): StoredVideoRecord {
-  return {
-    id: row.id,
-    subjectId: row.subject_id,
-    name: row.name,
-    type: row.mime_type,
-    uploadedAt: row.uploaded_at.toISOString(),
-    fileName: row.file_name,
-  };
-}
-
 async function readUsers() {
   const result = await db().query<UserRow>(
     'select name, email, password, role, progress, completed_video_ids from app_users order by name asc',
@@ -357,40 +321,6 @@ async function updateUserCompletedVideos(email: string, completedVideoIds: strin
   return result.rows[0] ? mapUser(result.rows[0]) : null;
 }
 
-async function readVideos() {
-  const result = await db().query<VideoRow>(
-    'select id, subject_id, name, mime_type, uploaded_at, file_name from videos order by uploaded_at asc',
-  );
-  return result.rows.map((row) => mapVideo(row));
-}
-
-async function findVideoById(id: string) {
-  const result = await db().query<VideoRow>(
-    'select id, subject_id, name, mime_type, uploaded_at, file_name, data from videos where id = $1 limit 1',
-    [id],
-  );
-  return result.rows[0] ?? null;
-}
-
-async function findVideoByFileName(fileName: string) {
-  const result = await db().query<VideoRow>(
-    'select id, subject_id, name, mime_type, uploaded_at, file_name, data from videos where file_name = $1 limit 1',
-    [fileName],
-  );
-  return result.rows[0] ?? null;
-}
-
-async function createVideo(record: StoredVideoRecord, data: Buffer) {
-  await db().query(
-    'insert into videos (id, subject_id, name, mime_type, uploaded_at, file_name, data) values ($1, $2, $3, $4, $5, $6, $7)',
-    [record.id, record.subjectId, record.name, record.type, record.uploadedAt, record.fileName, data],
-  );
-}
-
-async function deleteVideo(id: string) {
-  await db().query('delete from videos where id = $1', [id]);
-}
-
 async function readQuizzes() {
   const result = await db().query<{ subject_id: SubjectId; quiz: QuizQuestion[] }>(
     'select subject_id, quiz from quizzes',
@@ -411,22 +341,6 @@ async function updateQuiz(subjectId: SubjectId, quiz: QuizQuestion[]) {
   );
 }
 
-function safeExtension(fileName: string, mimeType: string) {
-  const fileExt = extname(fileName).toLowerCase();
-  if (fileExt) {
-    return fileExt.replace(/[^.a-z0-9]/gi, '');
-  }
-
-  if (mimeType.includes('webm')) {
-    return '.webm';
-  }
-  if (mimeType.includes('ogg')) {
-    return '.ogv';
-  }
-
-  return '.mp4';
-}
-
 function sanitizeUser(user: StoredUserRecord) {
   return {
     name: user.name,
@@ -434,6 +348,7 @@ function sanitizeUser(user: StoredUserRecord) {
     role: user.role,
     progress: user.progress,
     completedVideoIds: user.completedVideoIds ?? [],
+    progressSummary: calculateProgressSummary(user),
   };
 }
 
@@ -444,13 +359,36 @@ function sanitizeStudentProgress(user: StoredUserRecord) {
     role: user.role,
     progress: user.progress,
     completedVideoIds: user.completedVideoIds ?? [],
+    progressSummary: calculateProgressSummary(user),
   };
 }
 
-function createVideoResponse(req: Request, record: StoredVideoRecord) {
+function calculateProgressSummary(user: StoredUserRecord) {
+  const subjects = Object.entries(user.progress) as [SubjectId, SubjectProgress][];
+  const subjectProgress = subjects.map(([subjectId, progress]) => {
+    const lessonPercent = progress.lessonCompleted ? 25 : 0;
+    const activitiesPercent = Math.min(progress.completedActivities.length, 3) * (25 / 3);
+    const quizPercent = Math.min(progress.bestScore, 100) * 0.5;
+    const percentage = Math.round(Math.min(100, lessonPercent + activitiesPercent + quizPercent));
+
+    return {
+      subjectId,
+      percentage,
+      lessonCompleted: progress.lessonCompleted,
+      completedActivities: progress.completedActivities.length,
+      bestScore: progress.bestScore,
+      quizzesTaken: progress.quizzesTaken,
+    };
+  });
+  const overallPercentage =
+    subjectProgress.length === 0
+      ? 0
+      : Math.round(subjectProgress.reduce((total, subject) => total + subject.percentage, 0) / subjectProgress.length);
+
   return {
-    ...record,
-    url: `${getBaseUrl(req)}/uploaded-videos/${record.fileName}`,
+    overallPercentage,
+    completedVideos: user.completedVideoIds.length,
+    subjects: subjectProgress,
   };
 }
 
@@ -460,18 +398,6 @@ app.get('/api/health', async (_req, res) => {
     service: 'aula-escolar-backend',
     database: 'postgresql',
   });
-});
-
-app.get('/uploaded-videos/:fileName', async (req, res) => {
-  const fileName = req.params.fileName;
-  const video = await findVideoByFileName(fileName);
-
-  if (!video?.data) {
-    sendError(res, 404, 'Video no encontrado.');
-    return;
-  }
-
-  res.status(200).type(video.mime_type).send(video.data);
 });
 
 app.post('/api/auth/register', async (req, res) => {
@@ -665,61 +591,18 @@ app.post('/api/users/:email/videos/:videoId/complete', async (req, res) => {
   sendSuccess(res, 200, 'Video marcado como completado correctamente.', { user: sanitizeUser(updatedUser) });
 });
 
-app.get('/api/videos', async (req, res) => {
-  const records = await readVideos();
-  sendSuccess(res, 200, 'Videos consultados correctamente.', {
-    videos: records.map((record) => createVideoResponse(req, record)),
+app.get('/api/videos', async (_req, res) => {
+  sendSuccess(res, 200, 'Los videos son gestionados por el frontend.', {
+    videos: [],
   });
 });
 
-app.post('/api/videos', async (req, res) => {
-  const { subjectId, name, type, dataBase64 } = req.body ?? {};
-
-  if (!subjectId || !name || !type || !dataBase64) {
-    sendError(res, 400, 'Faltan datos del video.');
-    return;
-  }
-
-  const allowedSubjects = new Set(['matematica', 'historia', 'lengua', 'ciencias']);
-  if (!allowedSubjects.has(subjectId)) {
-    sendError(res, 400, 'Asignatura no valida.');
-    return;
-  }
-
-  const base64Payload = String(dataBase64).includes(',')
-    ? String(dataBase64).split(',').pop() ?? ''
-    : String(dataBase64);
-
-  const buffer = Buffer.from(base64Payload, 'base64');
-  const extension = safeExtension(String(name), String(type));
-  const id = randomUUID();
-  const fileName = `${id}${extension}`;
-  const nextRecord: StoredVideoRecord = {
-    id,
-    subjectId,
-    name,
-    type,
-    uploadedAt: new Date().toISOString(),
-    fileName,
-  };
-
-  await createVideo(nextRecord, buffer);
-  sendSuccess(res, 201, 'Video guardado correctamente.', {
-    video: createVideoResponse(req, nextRecord),
-  });
+app.post('/api/videos', async (_req, res) => {
+  sendError(res, 410, 'El backend no almacena videos. Los videos son gestionados por el frontend.');
 });
 
-app.delete('/api/videos/:id', async (req, res) => {
-  const { id } = req.params;
-  const record = await findVideoById(id);
-
-  if (!record) {
-    sendError(res, 404, 'Video no encontrado.');
-    return;
-  }
-
-  await deleteVideo(id);
-  sendSuccess(res, 200, 'Video eliminado correctamente.');
+app.delete('/api/videos/:id', async (_req, res) => {
+  sendError(res, 410, 'El backend no elimina videos. Los videos son gestionados por el frontend.');
 });
 
 app.use('/api', (_req, res) => {

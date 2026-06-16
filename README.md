@@ -37,7 +37,7 @@ https://backend-plataforma-abi.vercel.app
 
 ## Base de datos
 
-El backend guarda usuarios, progreso, evaluaciones y videos en PostgreSQL. Ejecuta este archivo en Supabase:
+El backend guarda usuarios, progreso, evaluaciones y videos completados en PostgreSQL. Los archivos de video los gestiona el frontend y no se guardan en tablas del backend. Ejecuta este archivo en Supabase:
 
 ```text
 database.sql

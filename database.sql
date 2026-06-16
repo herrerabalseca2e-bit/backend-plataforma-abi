@@ -1,3 +1,5 @@
+drop table if exists videos;
+
 create table if not exists app_users (
   email text primary key,
   name text not null,
@@ -16,19 +18,7 @@ create table if not exists quizzes (
   updated_at timestamptz not null default now()
 );
 
-create table if not exists videos (
-  id uuid primary key,
-  subject_id text not null check (subject_id in ('matematica', 'historia', 'lengua', 'ciencias')),
-  name text not null,
-  mime_type text not null,
-  uploaded_at timestamptz not null default now(),
-  file_name text not null unique,
-  data bytea not null
-);
-
 create index if not exists idx_app_users_role on app_users (role);
-create index if not exists idx_videos_subject_id on videos (subject_id);
-create index if not exists idx_videos_uploaded_at on videos (uploaded_at);
 
 insert into quizzes (subject_id, quiz)
 values
