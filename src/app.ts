@@ -1,4 +1,6 @@
 import express, { NextFunction, Request, Response } from 'express';
+import fs from 'fs/promises';
+import path from 'path';
 import pg from 'pg';
 
 const { Pool } = pg;
@@ -50,6 +52,7 @@ const pool = databaseUrl
   : null;
 
 const app = express();
+const appStoragePath = path.join(process.cwd(), 'app-storage');
 
 app.set('trust proxy', 1);
 app.use((req, res, next) => {
@@ -67,6 +70,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: '200mb' }));
+app.use('/app-storage', express.static(appStoragePath));
 
 function sendSuccess<T>(res: Response, status: number, message: string, data?: T) {
   res.status(status).json({
@@ -591,10 +595,30 @@ app.post('/api/users/:email/videos/:videoId/complete', async (req, res) => {
   sendSuccess(res, 200, 'Video marcado como completado correctamente.', { user: sanitizeUser(updatedUser) });
 });
 
-app.get('/api/videos', async (_req, res) => {
-  sendSuccess(res, 200, 'Los videos son gestionados por el frontend.', {
-    videos: [],
-  });
+app.get('/api/videos', async (req, res) => {
+  try {
+    const rawVideosPath = path.join(appStoragePath, 'videos.json');
+    const rawContent = await fs.readFile(rawVideosPath, 'utf-8');
+    const records = JSON.parse(rawContent) as Array<{
+      id: string;
+      subjectId: SubjectId;
+      name: string;
+      type: string;
+      uploadedAt: string;
+      fileName: string;
+    }>;
+
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const videos = records.map((record) => ({
+      ...record,
+      url: `${origin}/app-storage/uploaded-videos/${encodeURIComponent(record.fileName)}`,
+    }));
+
+    sendSuccess(res, 200, 'Videos cargados correctamente.', { videos });
+  } catch (error) {
+    console.error('Error leyendo videos:', error);
+    sendError(res, 500, 'No fue posible leer el listado de videos.');
+  }
 });
 
 app.post('/api/videos', async (_req, res) => {
